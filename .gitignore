@@ -1,0 +1,14 @@
+# Personal data — do not commit
+data/contacts.json
+data/conversations/
+data/schedule.json
+dating-texting-personal.md
+
+# Build artifacts & local state
+whatsapp-mcp/whatsapp-bridge/whatsapp-bridge.exe
+whatsapp-mcp/whatsapp-bridge/whatsapp-bridge.exe~
+whatsapp-mcp/whatsapp-bridge/whatsapp-store/
+whatsapp-mcp/whatsapp-bridge/store/
+whatsapp-mcp/whatsapp-mcp-server/__pycache__/
+whatsapp-mcp/whatsapp-mcp-server/.venv/
+*.db
