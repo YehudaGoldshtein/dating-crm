@@ -11,6 +11,19 @@ Claude Code slash commands run on cron schedules to:
 - Follow up on stale conversations
 - Track contacts, conversation history, and date scheduling
 
+## Repo Structure
+
+```
+dating-crm/
+├── commands/              # Claude Code slash commands
+├── tinder-mcp/            # submodule → Tinder MCP (Playwright automation)
+├── whatsapp-mcp/          # submodule → WhatsApp MCP (whatsmeow bridge)
+├── data/                  # gitignored: contacts, conversations, schedule
+├── dating-texting-guide.md
+├── dating-texting-personal.md  # gitignored: personal rules
+└── .gitmodules
+```
+
 ## Components
 
 ### Slash Commands (`commands/`)
@@ -23,21 +36,34 @@ Claude Code slash commands run on cron schedules to:
 | `/whatsapp-frequent` | Every 15 min | Replies to unread WhatsApp messages |
 | `/whatsapp-daily` | Daily | Follow-ups, cross-platform sync, date logistics |
 
+### Tinder MCP (`tinder-mcp/`)
+
+Git submodule → [YehudaGoldshtein/tinder-automation](https://github.com/YehudaGoldshtein/tinder-automation)
+
+Playwright-based Tinder web automation with 16 MCP tools. Features:
+- Swipe automation, match management, message sending
+- Full profile scanning (photos, bio, interests, messages)
+- Optional `timeout` param on every tool (no more hanging calls)
+- `matchId` bypass to skip slow match list scrolling (~90s → ~2s)
+- 3-minute match cache
+- Detailed logging to `logs/tinder-auto.log`
+
 ### WhatsApp MCP (`whatsapp-mcp/`)
 
-Two-part MCP server for WhatsApp integration:
+Git submodule → [YehudaGoldshtein/whatsapp-mcp](https://github.com/YehudaGoldshtein/whatsapp-mcp) (fork of [lharries/whatsapp-mcp](https://github.com/lharries/whatsapp-mcp))
+
+Two-part MCP server for WhatsApp:
 - **whatsapp-bridge** — Go service using [whatsmeow](https://github.com/tulir/whatsmeow) that connects to WhatsApp Web and stores messages in SQLite
-- **whatsapp-mcp-server** — Python MCP server exposing tools for searching contacts, reading/sending messages, and media
+- **whatsapp-mcp-server** — Python MCP server for searching contacts, reading/sending messages, and media
 
-### Tinder MCP (separate repo)
-
-The Tinder MCP server lives in its own repo: [tinder-mcp-server](https://github.com/YehudaGoldshtein/tinder-mcp-server)
+Custom improvements over upstream:
+- Seamless JID format auto-resolution (`@s.whatsapp.net` ↔ `@lid`) — fixes missed messages when WhatsApp migrates contacts between formats
 
 ### Data (gitignored)
 
-These files are created locally and not committed:
+Created locally, not committed:
 - `data/contacts.json` — Contact database with profile info, conversation state, and status
-- `data/conversations/{name}.md` — Per-contact conversation logs bridging Tinder and WhatsApp context
+- `data/conversations/{name}.md` — Per-contact conversation logs bridging Tinder ↔ WhatsApp context
 - `data/schedule.json` — Date scheduling with booked time slots
 - `dating-texting-personal.md` — Personal rules and availability
 
@@ -46,44 +72,89 @@ These files are created locally and not committed:
 ### Prerequisites
 
 - [Claude Code](https://claude.com/claude-code) CLI
+- Node.js 18+ (for Tinder MCP)
 - Go 1.21+ (for WhatsApp bridge)
 - Python 3.11+ and [uv](https://github.com/astral-sh/uv) (for WhatsApp MCP server)
-- Tinder MCP server installed separately
+- Playwright Chromium (`npx playwright install chromium`)
 
-### Steps
+### 1. Clone
 
-1. **Clone and build WhatsApp bridge:**
-   ```bash
-   cd whatsapp-mcp/whatsapp-bridge
-   go build -o whatsapp-bridge.exe .
-   ./whatsapp-bridge.exe  # scan QR code to pair
-   ```
+```bash
+git clone --recurse-submodules https://github.com/YehudaGoldshtein/dating-crm.git
+cd dating-crm
+```
 
-2. **Register MCP servers** in `~/.claude/settings.json`:
-   ```json
-   {
-     "mcpServers": {
-       "whatsapp": {
-         "command": "uv",
-         "args": ["--directory", "<path>/whatsapp-mcp/whatsapp-mcp-server", "run", "main.py"]
-       }
-     }
-   }
-   ```
+### 2. Build Tinder MCP
 
-3. **Install slash commands** — copy or symlink `commands/*.md` into `~/.claude/commands/`
+```bash
+cd tinder-mcp
+npm install
+npx playwright install chromium
+npm run build
+```
 
-4. **Create data files:**
-   ```bash
-   mkdir -p data/conversations
-   echo '{"contacts":[],"analytics":{},"last_tinder_check":null,"last_whatsapp_check":null}' > data/contacts.json
-   echo '{"booked":[]}' > data/schedule.json
-   ```
+First login (opens browser for manual Tinder login):
+```bash
+npx ts-node src/index.ts login
+```
 
-5. **Start a session:**
-   ```
-   /start-crm
-   ```
+### 3. Build WhatsApp MCP
+
+```bash
+cd whatsapp-mcp/whatsapp-bridge
+go run main.go  # scan QR code with WhatsApp to pair
+```
+
+### 4. Register MCP servers
+
+Add to `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "tinder": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["<path>/dating-crm/tinder-mcp/dist/mcp-server.js"],
+      "cwd": "<path>/dating-crm/tinder-mcp"
+    },
+    "whatsapp": {
+      "command": "uv",
+      "args": ["--directory", "<path>/dating-crm/whatsapp-mcp/whatsapp-mcp-server", "run", "main.py"]
+    }
+  }
+}
+```
+
+### 5. Install slash commands
+
+Copy or symlink into Claude Code commands directory:
+
+```bash
+cp commands/*.md ~/.claude/commands/
+```
+
+### 6. Create data files
+
+```bash
+mkdir -p data/conversations
+echo '{"contacts":[],"analytics":{},"last_tinder_check":null,"last_whatsapp_check":null}' > data/contacts.json
+echo '{"booked":[]}' > data/schedule.json
+```
+
+### 7. Start
+
+```
+/start-crm
+```
+
+## Updating submodules
+
+To pull latest changes from both MCP repos:
+
+```bash
+git submodule update --remote
+```
 
 ## Note
 
