@@ -51,6 +51,23 @@ def _resolve_lid_to_phone(lid_user: str) -> Optional[str]:
         if 'conn' in locals():
             conn.close()
 
+def _resolve_chat_jid_alt(chat_jid: str) -> Optional[str]:
+    """Given a chat JID, try to find the alternative format.
+    phone@s.whatsapp.net → lid@lid, or lid@lid → phone@s.whatsapp.net"""
+    if not chat_jid or '@' not in chat_jid:
+        return None
+    user, domain = chat_jid.split('@', 1)
+    if domain == 's.whatsapp.net':
+        # Phone-based JID → try to find LID
+        lid_user = _resolve_phone_to_lid(user)
+        return f"{lid_user}@lid" if lid_user else None
+    elif domain == 'lid':
+        # LID-based JID → try to find phone
+        phone = _resolve_lid_to_phone(user)
+        return f"{phone}@s.whatsapp.net" if phone else None
+    return None
+
+
 @dataclass
 class Message:
     timestamp: datetime
@@ -209,8 +226,15 @@ def list_messages(
             params.append(sender_phone_number)
             
         if chat_jid:
-            where_clauses.append("messages.chat_jid = ?")
-            params.append(chat_jid)
+            # Support both @s.whatsapp.net and @lid formats seamlessly
+            # If given a phone-based JID, also try the LID version and vice versa
+            alt_jid = _resolve_chat_jid_alt(chat_jid)
+            if alt_jid:
+                where_clauses.append("(messages.chat_jid = ? OR messages.chat_jid = ?)")
+                params.extend([chat_jid, alt_jid])
+            else:
+                where_clauses.append("messages.chat_jid = ?")
+                params.append(chat_jid)
             
         if query:
             where_clauses.append("LOWER(messages.content) LIKE LOWER(?)")
@@ -500,7 +524,7 @@ def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> List[Chat]:
         conn = sqlite3.connect(MESSAGES_DB_PATH)
         cursor = conn.cursor()
         
-        cursor.execute("""
+        query = """
             SELECT DISTINCT
                 c.jid,
                 c.name,
@@ -513,7 +537,15 @@ def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> List[Chat]:
             WHERE m.sender = ? OR c.jid = ?
             ORDER BY c.last_message_time DESC
             LIMIT ? OFFSET ?
-        """, (jid, jid, limit, page * limit))
+        """
+        alt_jid = _resolve_chat_jid_alt(jid)
+        if alt_jid:
+            cursor.execute(query.replace(
+                "WHERE m.sender = ? OR c.jid = ?",
+                "WHERE m.sender IN (?, ?) OR c.jid IN (?, ?)"
+            ), (jid, alt_jid, jid, alt_jid, limit, page * limit))
+        else:
+            cursor.execute(query, (jid, jid, limit, page * limit))
         
         chats = cursor.fetchall()
         
@@ -545,8 +577,8 @@ def get_last_interaction(jid: str) -> str:
         conn = sqlite3.connect(MESSAGES_DB_PATH)
         cursor = conn.cursor()
         
-        cursor.execute("""
-            SELECT 
+        query = """
+            SELECT
                 m.timestamp,
                 m.sender,
                 c.name,
@@ -560,7 +592,15 @@ def get_last_interaction(jid: str) -> str:
             WHERE m.sender = ? OR c.jid = ?
             ORDER BY m.timestamp DESC
             LIMIT 1
-        """, (jid, jid))
+        """
+        alt_jid = _resolve_chat_jid_alt(jid)
+        if alt_jid:
+            cursor.execute(query.replace(
+                "WHERE m.sender = ? OR c.jid = ?",
+                "WHERE m.sender IN (?, ?) OR c.jid IN (?, ?)"
+            ), (jid, alt_jid, jid, alt_jid))
+        else:
+            cursor.execute(query, (jid, jid))
         
         msg_data = cursor.fetchone()
         
@@ -611,9 +651,13 @@ def get_chat(chat_jid: str, include_last_message: bool = True) -> Optional[Chat]
                 AND c.last_message_time = m.timestamp
             """
             
-        query += " WHERE c.jid = ?"
-        
-        cursor.execute(query, (chat_jid,))
+        alt_jid = _resolve_chat_jid_alt(chat_jid)
+        if alt_jid:
+            query += " WHERE (c.jid = ? OR c.jid = ?)"
+            cursor.execute(query, (chat_jid, alt_jid))
+        else:
+            query += " WHERE c.jid = ?"
+            cursor.execute(query, (chat_jid,))
         chat_data = cursor.fetchone()
         
         if not chat_data:
