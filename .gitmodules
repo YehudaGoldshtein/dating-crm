@@ -1,0 +1,6 @@
+[submodule "whatsapp-mcp"]
+	path = whatsapp-mcp
+	url = https://github.com/YehudaGoldshtein/whatsapp-mcp.git
+[submodule "tinder-mcp"]
+	path = tinder-mcp
+	url = https://github.com/YehudaGoldshtein/tinder-automation.git
